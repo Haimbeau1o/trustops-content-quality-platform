@@ -27,7 +27,7 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 	if cfg.RedisAddr != "127.0.0.1:6379" {
 		t.Fatalf("expected default redis addr, got %q", cfg.RedisAddr)
 	}
-	if cfg.RabbitMQURL != "amqp://guest:guest@127.0.0.1:5672/" {
+	if cfg.RabbitMQURL != "amqp://trustops:trustops@127.0.0.1:5672/" {
 		t.Fatalf("expected default rabbit url, got %q", cfg.RabbitMQURL)
 	}
 	if cfg.RabbitMQQueue != "content.events.ingest" {
@@ -47,7 +47,7 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	t.Setenv("REDIS_ADDR", "redis:6380")
 	t.Setenv("REDIS_PASSWORD", "secret")
 	t.Setenv("REDIS_DB", "5")
-	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
+	t.Setenv("RABBITMQ_URL", "amqp://trustops:trustops@rabbitmq:5672/")
 	t.Setenv("RABBITMQ_QUEUE", "q.demo")
 	t.Setenv("STORAGE_BACKEND", "memory")
 	t.Setenv("CASE_CACHE_TTL_SECONDS", "42")
@@ -63,7 +63,7 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	if cfg.RedisAddr != "redis:6380" || cfg.RedisPassword != "secret" || cfg.RedisDB != 5 {
 		t.Fatalf("unexpected redis config: %#v", cfg)
 	}
-	if cfg.RabbitMQURL != "amqp://guest:guest@rabbitmq:5672/" || cfg.RabbitMQQueue != "q.demo" {
+	if cfg.RabbitMQURL != "amqp://trustops:trustops@rabbitmq:5672/" || cfg.RabbitMQQueue != "q.demo" {
 		t.Fatalf("unexpected rabbit config: %#v", cfg)
 	}
 	if cfg.StorageBackend != "memory" {

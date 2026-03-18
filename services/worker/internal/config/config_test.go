@@ -9,7 +9,7 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 
 	cfg := LoadFromEnv()
 
-	if cfg.RabbitMQURL != "amqp://guest:guest@127.0.0.1:5672/" {
+	if cfg.RabbitMQURL != "amqp://trustops:trustops@127.0.0.1:5672/" {
 		t.Fatalf("unexpected default rabbitmq url: %q", cfg.RabbitMQURL)
 	}
 	if cfg.QueueName != "content.events.ingest" {
@@ -21,12 +21,12 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 }
 
 func TestLoadFromEnvOverrides(t *testing.T) {
-	t.Setenv("WORKER_RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
+	t.Setenv("WORKER_RABBITMQ_URL", "amqp://trustops:trustops@rabbitmq:5672/")
 	t.Setenv("WORKER_QUEUE", "queue.custom")
 	t.Setenv("WORKER_CONSUMER_TAG", "consumer.custom")
 
 	cfg := LoadFromEnv()
-	if cfg.RabbitMQURL != "amqp://guest:guest@rabbitmq:5672/" {
+	if cfg.RabbitMQURL != "amqp://trustops:trustops@rabbitmq:5672/" {
 		t.Fatalf("unexpected rabbitmq url: %q", cfg.RabbitMQURL)
 	}
 	if cfg.QueueName != "queue.custom" {

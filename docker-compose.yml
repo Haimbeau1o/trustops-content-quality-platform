@@ -13,6 +13,12 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       - ./infra/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   redis:
     image: redis:7.4-alpine
@@ -20,6 +26,12 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
 
   rabbitmq:
     image: rabbitmq:3.13-management
@@ -28,6 +40,15 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-trustops}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-trustops}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   gateway:
     build:
@@ -36,19 +57,23 @@ services:
     restart: unless-stopped
     environment:
       GATEWAY_ADDR: "${GATEWAY_ADDR:-:8080}"
-      STORAGE_BACKEND: "${STORAGE_BACKEND:-auto}"
+      STORAGE_BACKEND: "${STORAGE_BACKEND:-mysql}"
       MYSQL_DSN: "${MYSQL_DSN:-trustops:trustops@tcp(mysql:3306)/content_quality?parseTime=true}"
       REDIS_ADDR: "${REDIS_ADDR:-redis:6379}"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
       REDIS_DB: "${REDIS_DB:-0}"
-      RABBITMQ_URL: "${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}"
+      RABBITMQ_URL: "${RABBITMQ_URL:-amqp://trustops:trustops@rabbitmq:5672/}"
       RABBITMQ_QUEUE: "${RABBITMQ_QUEUE:-content.events.ingest}"
       CASE_CACHE_TTL_SECONDS: "${CASE_CACHE_TTL_SECONDS:-300}"
     depends_on:
-      - mysql
-      - redis
-      - rabbitmq
-      - copilot
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      copilot:
+        condition: service_started
     ports:
       - "8080:8080"
 
@@ -66,11 +91,12 @@ services:
     container_name: cq-worker
     restart: unless-stopped
     environment:
-      WORKER_RABBITMQ_URL: "${WORKER_RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}"
+      WORKER_RABBITMQ_URL: "${WORKER_RABBITMQ_URL:-amqp://trustops:trustops@rabbitmq:5672/}"
       WORKER_QUEUE: "${WORKER_QUEUE:-content.events.ingest}"
       WORKER_CONSUMER_TAG: "${WORKER_CONSUMER_TAG:-content-quality-worker}"
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
 
 volumes:
   mysql_data:

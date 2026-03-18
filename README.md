@@ -87,10 +87,11 @@ trustops-content-quality-platform/
 
 Phase 2 已将网关从纯内存骨架升级为可演示的平台后端形态：
 - 配置：`services/gateway-go/internal/config` 从环境变量加载，带默认值
-- 存储：`internal/storage` 支持 `MySQL(持久化) + Redis(查询缓存)`，并保留内存 fallback
-- 消息：`internal/mq` 在 ingest 后发布轻量 case 事件到 RabbitMQ
+- 存储：`internal/storage` 支持 `MySQL(持久化) + Redis(查询缓存)`，Redis 异常时降级为 MySQL-only
+- 消息：`internal/mq` 在 ingest 后发布轻量 case 事件到 RabbitMQ，启动阶段要求 MQ 可用
 - 异步：`services/worker` 消费队列并记录处理日志
 - AI：`services/ai-copilot` 继续保持增强链路，不替代主判定
+- 编排：`docker-compose.yml` 为 MySQL / Redis / RabbitMQ 增加健康检查，避免启动窗口进入“假成功”链路
 
 ### 1) 环境变量
 

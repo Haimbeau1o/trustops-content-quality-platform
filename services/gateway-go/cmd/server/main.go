@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log"
 	"time"
 
@@ -15,10 +16,45 @@ import (
 	redis "github.com/redis/go-redis/v9"
 )
 
+type pingCloserDB = *sql.DB
+
+type publisherWithClose interface {
+	mq.Publisher
+}
+
+var openMySQL = func(dsn string) (pingCloserDB, error) {
+	return sql.Open("mysql", dsn)
+}
+
+var pingRedis = func(ctx context.Context, cfg config.Config) error {
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     cfg.RedisAddr,
+		Password: cfg.RedisPassword,
+		DB:       cfg.RedisDB,
+	})
+	defer rdb.Close()
+	return rdb.Ping(ctx).Err()
+}
+
+var newRedisCacheClient = func(cfg config.Config) redis.Cmdable {
+	return redis.NewClient(&redis.Options{
+		Addr:     cfg.RedisAddr,
+		Password: cfg.RedisPassword,
+		DB:       cfg.RedisDB,
+	})
+}
+
+var newRabbitPublisher = func(url, queueName string) (publisherWithClose, error) {
+	return mq.NewRabbitPublisher(url, queueName)
+}
+
 func main() {
 	cfg := config.LoadFromEnv()
 	repo := buildRepository(cfg)
-	publisher := buildPublisher(cfg)
+	publisher, err := buildPublisher(cfg)
+	if err != nil {
+		log.Fatalf("rabbitmq publisher unavailable: %v", err)
+	}
 	defer func() {
 		if err := publisher.Close(); err != nil {
 			log.Printf("close publisher failed: %v", err)
@@ -39,7 +75,7 @@ func buildRepository(cfg config.Config) storage.CaseRepository {
 		return storage.NewInMemoryCaseRepository(storage.DefaultSeedCases())
 	}
 
-	db, err := sql.Open("mysql", cfg.MySQLDSN)
+	db, err := openMySQL(cfg.MySQLDSN)
 	if err != nil {
 		log.Printf("mysql open failed, fallback memory: %v", err)
 		return storage.NewInMemoryCaseRepository(storage.DefaultSeedCases())
@@ -52,28 +88,25 @@ func buildRepository(cfg config.Config) storage.CaseRepository {
 		return storage.NewInMemoryCaseRepository(storage.DefaultSeedCases())
 	}
 
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     cfg.RedisAddr,
-		Password: cfg.RedisPassword,
-		DB:       cfg.RedisDB,
-	})
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		log.Printf("redis ping failed, fallback memory: %v", err)
-		_ = db.Close()
-		_ = rdb.Close()
-		return storage.NewInMemoryCaseRepository(storage.DefaultSeedCases())
+	if err := pingRedis(ctx, cfg); err != nil {
+		log.Printf("redis ping failed, continue with mysql only: %v", err)
+		log.Printf("gateway storage backend=mysql")
+		return storage.NewMySQLRedisCaseRepository(db, nil, time.Duration(cfg.CaseCacheTTLSeconds)*time.Second)
 	}
 
+	rdb := newRedisCacheClient(cfg)
 	log.Printf("gateway storage backend=mysql+redis")
 	return storage.NewMySQLRedisCaseRepository(db, rdb, time.Duration(cfg.CaseCacheTTLSeconds)*time.Second)
 }
 
-func buildPublisher(cfg config.Config) mq.Publisher {
-	pub, err := mq.NewRabbitPublisher(cfg.RabbitMQURL, cfg.RabbitMQQueue)
+func buildPublisher(cfg config.Config) (publisherWithClose, error) {
+	if cfg.RabbitMQURL == "" {
+		return nil, errors.New("rabbitmq url is empty")
+	}
+	pub, err := newRabbitPublisher(cfg.RabbitMQURL, cfg.RabbitMQQueue)
 	if err != nil {
-		log.Printf("rabbitmq unavailable, using noop publisher: %v", err)
-		return mq.NewNoopPublisher()
+		return nil, err
 	}
 	log.Printf("gateway publisher backend=rabbitmq queue=%s", cfg.RabbitMQQueue)
-	return pub
+	return pub, nil
 }

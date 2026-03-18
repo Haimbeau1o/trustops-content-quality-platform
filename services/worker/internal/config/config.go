@@ -10,7 +10,7 @@ type Config struct {
 
 func LoadFromEnv() Config {
 	return Config{
-		RabbitMQURL: getEnv("WORKER_RABBITMQ_URL", "amqp://guest:guest@127.0.0.1:5672/"),
+		RabbitMQURL: getEnv("WORKER_RABBITMQ_URL", "amqp://trustops:trustops@127.0.0.1:5672/"),
 		QueueName:   getEnv("WORKER_QUEUE", "content.events.ingest"),
 		ConsumerTag: getEnv("WORKER_CONSUMER_TAG", "content-quality-worker"),
 	}

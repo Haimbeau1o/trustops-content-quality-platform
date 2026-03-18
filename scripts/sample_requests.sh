@@ -27,6 +27,7 @@ curl -sS -X POST "${COPILOT_BASE_URL}/copilot/content/summary" \
   -H "Content-Type: application/json" \
   -d '{
     "case_id": "case-evt-sample-001",
+    "title": "Potential spam upload with unsafe keyword hit",
     "content_id": "content-sample-001",
     "risk_signals": ["spam", "unsafe"],
     "evidence": [{"type":"rule_hit","detail":"rule:unsafe_keyword"}]

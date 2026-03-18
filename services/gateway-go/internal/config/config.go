@@ -24,7 +24,7 @@ func LoadFromEnv() Config {
 		RedisAddr:           getEnv("REDIS_ADDR", "127.0.0.1:6379"),
 		RedisPassword:       getEnv("REDIS_PASSWORD", ""),
 		RedisDB:             getEnvInt("REDIS_DB", 0),
-		RabbitMQURL:         getEnv("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1:5672/"),
+		RabbitMQURL:         getEnv("RABBITMQ_URL", "amqp://trustops:trustops@127.0.0.1:5672/"),
 		RabbitMQQueue:       getEnv("RABBITMQ_QUEUE", "content.events.ingest"),
 		StorageBackend:      getEnv("STORAGE_BACKEND", "auto"),
 		CaseCacheTTLSeconds: getEnvInt("CASE_CACHE_TTL_SECONDS", 300),
