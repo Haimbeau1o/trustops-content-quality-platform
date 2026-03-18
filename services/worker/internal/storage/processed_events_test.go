@@ -68,3 +68,56 @@ func TestMySQLProcessedEventRepositoryLifecycle(t *testing.T) {
 		t.Fatalf("sql expectations not met: %v", err)
 	}
 }
+
+func TestInMemoryProcessedEventRepositoryAllowsRetryAfterFailure(t *testing.T) {
+	repo := NewInMemoryProcessedEventRepository()
+	ctx := context.Background()
+
+	first, err := repo.TryStart(ctx, "evt-retry-1", "case-1", "worker-a")
+	if err != nil {
+		t.Fatalf("TryStart() first error = %v", err)
+	}
+	if !first {
+		t.Fatalf("expected first TryStart to return true")
+	}
+	if err := repo.MarkFailed(ctx, "evt-retry-1", "boom"); err != nil {
+		t.Fatalf("MarkFailed() error = %v", err)
+	}
+
+	retry, err := repo.TryStart(ctx, "evt-retry-1", "case-1", "worker-a")
+	if err != nil {
+		t.Fatalf("TryStart() retry error = %v", err)
+	}
+	if !retry {
+		t.Fatalf("expected failed event to be retryable")
+	}
+}
+
+func TestMySQLProcessedEventRepositoryAllowsRetryAfterFailure(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewMySQLProcessedEventRepository(db)
+	ctx := context.Background()
+
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO content_worker_processed_events (event_id, case_id, consumer_name, status, last_error, processed_at)
+		VALUES (?, ?, ?, 'processing', '', NULL)
+		ON DUPLICATE KEY UPDATE
+			status = IF(status = 'failed', 'processing', status),
+			consumer_name = IF(status = 'failed', VALUES(consumer_name), consumer_name),
+			last_error = IF(status = 'failed', '', last_error),
+			processed_at = IF(status = 'failed', NULL, processed_at)`)).
+		WithArgs("evt-retry-9", "case-9", "worker-9").
+		WillReturnResult(sqlmock.NewResult(1, 2))
+
+	ok, err := repo.TryStart(ctx, "evt-retry-9", "case-9", "worker-9")
+	if err != nil {
+		t.Fatalf("TryStart() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected failed mysql event to be retryable")
+	}
+}

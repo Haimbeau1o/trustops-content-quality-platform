@@ -270,6 +270,37 @@ func TestGetCaseReadsFromRepository(t *testing.T) {
 	assert.True(t, strings.Contains(string(resp.Body.Bytes()), `"case_id":"case-501"`))
 }
 
+func TestGetCaseRateLimitSharedAcrossDifferentCaseIDs(t *testing.T) {
+	repo := newFakeCaseRepository()
+	repo.saved["case-601"] = storage.Case{CaseID: "case-601", Status: "open", ContentID: "content-601", ContentType: "image", RiskSignals: []string{"spam"}}
+	repo.saved["case-602"] = storage.Case{CaseID: "case-602", Status: "open", ContentID: "content-602", ContentType: "image", RiskSignals: []string{"spam"}}
+
+	h := NewRouterWithDependencies(Dependencies{
+		CaseRepository: repo,
+		Publisher:      &fakePublisher{},
+		Authorizer:     security.NewAPIKeyAuthorizer([]string{"test-key"}),
+		RateLimiter:    security.NewInMemoryFixedWindowLimiter(1, time.Minute),
+	})
+
+	first := ut.PerformRequest(
+		h.Engine,
+		"GET",
+		"/api/v1/content/cases/case-601",
+		nil,
+		ut.Header{Key: "X-API-Key", Value: "test-key"},
+	)
+	assert.DeepEqual(t, 200, first.Code)
+
+	second := ut.PerformRequest(
+		h.Engine,
+		"GET",
+		"/api/v1/content/cases/case-602",
+		nil,
+		ut.Header{Key: "X-API-Key", Value: "test-key"},
+	)
+	assert.DeepEqual(t, 429, second.Code)
+}
+
 func TestProtectedRoutesRequireAPIKey(t *testing.T) {
 	repo := newFakeCaseRepository()
 	h := NewRouterWithDependencies(Dependencies{

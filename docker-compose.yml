@@ -58,11 +58,11 @@ services:
     environment:
       GATEWAY_ADDR: "${GATEWAY_ADDR:-:8080}"
       STORAGE_BACKEND: "${STORAGE_BACKEND:-mysql}"
-      MYSQL_DSN: "${MYSQL_DSN:-trustops:trustops@tcp(mysql:3306)/content_quality?parseTime=true}"
+      MYSQL_DSN: "${MYSQL_DSN:-${MYSQL_USER:-trustops}:${MYSQL_PASSWORD:-trustops}@tcp(mysql:3306)/${MYSQL_DATABASE:-content_quality}?parseTime=true}"
       REDIS_ADDR: "${REDIS_ADDR:-redis:6379}"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
       REDIS_DB: "${REDIS_DB:-0}"
-      RABBITMQ_URL: "${RABBITMQ_URL:-amqp://trustops:trustops@rabbitmq:5672/}"
+      RABBITMQ_URL: "${RABBITMQ_URL:-amqp://${RABBITMQ_DEFAULT_USER:-trustops}:${RABBITMQ_DEFAULT_PASS:-trustops}@rabbitmq:5672/}"
       RABBITMQ_QUEUE: "${RABBITMQ_QUEUE:-content.events.ingest}"
       CASE_CACHE_TTL_SECONDS: "${CASE_CACHE_TTL_SECONDS:-300}"
       OUTBOX_POLL_INTERVAL_SECONDS: "${OUTBOX_POLL_INTERVAL_SECONDS:-2}"
@@ -98,11 +98,11 @@ services:
     container_name: cq-worker
     restart: unless-stopped
     environment:
-      WORKER_RABBITMQ_URL: "${WORKER_RABBITMQ_URL:-amqp://trustops:trustops@rabbitmq:5672/}"
+      WORKER_RABBITMQ_URL: "${WORKER_RABBITMQ_URL:-amqp://${RABBITMQ_DEFAULT_USER:-trustops}:${RABBITMQ_DEFAULT_PASS:-trustops}@rabbitmq:5672/}"
       WORKER_QUEUE: "${WORKER_QUEUE:-content.events.ingest}"
       WORKER_CONSUMER_TAG: "${WORKER_CONSUMER_TAG:-content-quality-worker}"
       WORKER_STORAGE_BACKEND: "${WORKER_STORAGE_BACKEND:-mysql}"
-      WORKER_MYSQL_DSN: "${WORKER_MYSQL_DSN:-trustops:trustops@tcp(mysql:3306)/content_quality?parseTime=true}"
+      WORKER_MYSQL_DSN: "${WORKER_MYSQL_DSN:-${MYSQL_USER:-trustops}:${MYSQL_PASSWORD:-trustops}@tcp(mysql:3306)/${MYSQL_DATABASE:-content_quality}?parseTime=true}"
     depends_on:
       mysql:
         condition: service_healthy

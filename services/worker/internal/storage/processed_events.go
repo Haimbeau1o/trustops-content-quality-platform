@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"strings"
 	"sync"
 )
 
@@ -27,7 +26,7 @@ func NewInMemoryProcessedEventRepository() *InMemoryProcessedEventRepository {
 func (r *InMemoryProcessedEventRepository) TryStart(_ context.Context, eventID, _ string, _ string) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.events[eventID]; exists {
+	if status, exists := r.events[eventID]; exists && status != "failed" {
 		return false, nil
 	}
 	r.events[eventID] = "processing"
@@ -57,20 +56,27 @@ func NewMySQLProcessedEventRepository(db *sql.DB) *MySQLProcessedEventRepository
 }
 
 func (r *MySQLProcessedEventRepository) TryStart(ctx context.Context, eventID, caseID, consumerName string) (bool, error) {
-	_, err := r.db.ExecContext(
+	result, err := r.db.ExecContext(
 		ctx,
-		"INSERT INTO content_worker_processed_events (event_id, case_id, consumer_name, status, last_error, processed_at) VALUES (?, ?, ?, 'processing', '', NULL)",
+		`INSERT INTO content_worker_processed_events (event_id, case_id, consumer_name, status, last_error, processed_at)
+		VALUES (?, ?, ?, 'processing', '', NULL)
+		ON DUPLICATE KEY UPDATE
+			status = IF(status = 'failed', 'processing', status),
+			consumer_name = IF(status = 'failed', VALUES(consumer_name), consumer_name),
+			last_error = IF(status = 'failed', '', last_error),
+			processed_at = IF(status = 'failed', NULL, processed_at)`,
 		eventID,
 		caseID,
 		consumerName,
 	)
 	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
-			return false, nil
-		}
 		return false, err
 	}
-	return true, nil
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
 }
 
 func (r *MySQLProcessedEventRepository) MarkProcessed(ctx context.Context, eventID string) error {

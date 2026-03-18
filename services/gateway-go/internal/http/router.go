@@ -251,7 +251,11 @@ func (h *apiHandler) authorizeAndRateLimit(ctx context.Context, c *app.RequestCo
 		return false
 	}
 
-	allowed, err := h.rateLimiter.Allow(ctx, security.BuildLimiterKey(apiKey, string(c.Path())))
+	scope := c.FullPath()
+	if scope == "" {
+		scope = string(c.Path())
+	}
+	allowed, err := h.rateLimiter.Allow(ctx, security.BuildLimiterKey(c.ClientIP(), scope))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, utils.H{"error": "rate_limiter_failed"})
 		return false

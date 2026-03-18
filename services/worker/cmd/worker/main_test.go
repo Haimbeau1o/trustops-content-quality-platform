@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/Haimbeau1o/trustops-content-quality-platform/services/worker/internal/config"
-	"github.com/Haimbeau1o/trustops-content-quality-platform/services/worker/internal/storage"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -82,7 +81,7 @@ func TestHandleMessageSuccessIsMarkedAndAcked(t *testing.T) {
 	}
 }
 
-func TestBuildProcessedEventRepositoryFallsBackToMemory(t *testing.T) {
+func TestBuildProcessedEventRepositoryFailsWhenMySQLUnavailable(t *testing.T) {
 	prevOpenMySQL := openMySQL
 	t.Cleanup(func() {
 		openMySQL = prevOpenMySQL
@@ -91,11 +90,14 @@ func TestBuildProcessedEventRepositoryFallsBackToMemory(t *testing.T) {
 		return nil, context.DeadlineExceeded
 	}
 
-	repo := buildProcessedEventRepository(config.Config{
+	repo, err := buildProcessedEventRepository(config.Config{
 		StorageBackend: "mysql",
 		MySQLDSN:       "invalid",
 	})
-	if _, ok := repo.(*storage.InMemoryProcessedEventRepository); !ok {
-		t.Fatalf("expected in-memory fallback, got %T", repo)
+	if err == nil {
+		t.Fatalf("expected mysql-backed worker repository init to fail")
+	}
+	if repo != nil {
+		t.Fatalf("expected nil repo on init failure, got %T", repo)
 	}
 }

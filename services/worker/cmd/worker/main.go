@@ -22,7 +22,10 @@ var openMySQL = func(dsn string) (pingCloserDB, error) {
 
 func main() {
 	cfg := config.LoadFromEnv()
-	processedRepo := buildProcessedEventRepository(cfg)
+	processedRepo, err := buildProcessedEventRepository(cfg)
+	if err != nil {
+		log.Fatalf("worker processed-event repository init failed: %v", err)
+	}
 	logger := log.Default()
 
 	conn, err := amqp.Dial(cfg.RabbitMQURL)
@@ -69,24 +72,22 @@ func main() {
 	}
 }
 
-func buildProcessedEventRepository(cfg config.Config) storage.ProcessedEventRepository {
+func buildProcessedEventRepository(cfg config.Config) (storage.ProcessedEventRepository, error) {
 	if strings.ToLower(strings.TrimSpace(cfg.StorageBackend)) != "mysql" {
-		return storage.NewInMemoryProcessedEventRepository()
+		return storage.NewInMemoryProcessedEventRepository(), nil
 	}
 
 	db, err := openMySQL(cfg.MySQLDSN)
 	if err != nil {
-		log.Printf("worker mysql open failed, fallback to memory dedup: %v", err)
-		return storage.NewInMemoryProcessedEventRepository()
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
-		log.Printf("worker mysql ping failed, fallback to memory dedup: %v", err)
 		_ = db.Close()
-		return storage.NewInMemoryProcessedEventRepository()
+		return nil, err
 	}
-	return storage.NewMySQLProcessedEventRepository(db)
+	return storage.NewMySQLProcessedEventRepository(db), nil
 }
 
 func handleMessage(ctx context.Context, msg amqp.Delivery, repo storage.ProcessedEventRepository, logger *log.Logger, consumerName string) {

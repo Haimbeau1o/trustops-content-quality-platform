@@ -39,12 +39,15 @@ func TestBuildRepositoryKeepsMySQLPersistenceWhenRedisUnavailable(t *testing.T) 
 		return errors.New("redis unavailable")
 	}
 
-	repo := buildRepository(config.Config{
+	repo, err := buildRepository(config.Config{
 		StorageBackend:      "mysql",
 		MySQLDSN:            "trustops:trustops@tcp(mysql:3306)/content_quality?parseTime=true",
 		RedisAddr:           "redis:6379",
 		CaseCacheTTLSeconds: 300,
 	})
+	if err != nil {
+		t.Fatalf("buildRepository() error = %v", err)
+	}
 
 	if _, ok := repo.(*storage.InMemoryCaseRepository); ok {
 		t.Fatalf("expected mysql-backed repository when redis is unavailable")
@@ -54,6 +57,28 @@ func TestBuildRepositoryKeepsMySQLPersistenceWhenRedisUnavailable(t *testing.T) 
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("sql expectations not met: %v", err)
+	}
+}
+
+func TestBuildRepositoryFailsWhenMySQLUnavailable(t *testing.T) {
+	prevOpenMySQL := openMySQL
+	t.Cleanup(func() {
+		openMySQL = prevOpenMySQL
+	})
+
+	openMySQL = func(string) (pingCloserDB, error) {
+		return nil, errors.New("mysql unavailable")
+	}
+
+	repo, err := buildRepository(config.Config{
+		StorageBackend: "mysql",
+		MySQLDSN:       "invalid",
+	})
+	if err == nil {
+		t.Fatalf("expected mysql-backed repository init to fail")
+	}
+	if repo != nil {
+		t.Fatalf("expected nil repo when mysql init fails, got %T", repo)
 	}
 }
 

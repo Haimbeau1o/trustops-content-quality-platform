@@ -492,6 +492,9 @@ ON DUPLICATE KEY UPDATE
 			if !found {
 				return IngestCaseResult{}, err
 			}
+			if auditErr := insertAuditLog(ctx, r.db, input.EventID, record.CaseID, "idempotent_replay", "duplicate event replayed"); auditErr != nil {
+				return IngestCaseResult{}, auditErr
+			}
 			return IngestCaseResult{
 				Case:             record,
 				IdempotentReplay: true,
@@ -783,8 +786,12 @@ func queryCaseByID(ctx context.Context, db queryRower, caseID string) (Case, boo
 	return record, true, nil
 }
 
-func insertAuditLog(ctx context.Context, tx *sql.Tx, eventID, caseID, action, detail string) error {
-	_, err := tx.ExecContext(
+type auditLogExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func insertAuditLog(ctx context.Context, execer auditLogExecer, eventID, caseID, action, detail string) error {
+	_, err := execer.ExecContext(
 		ctx,
 		"INSERT INTO content_audit_logs (event_id, case_id, action, detail) VALUES (?, ?, ?, ?)",
 		eventID,

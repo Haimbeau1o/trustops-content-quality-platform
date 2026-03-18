@@ -53,7 +53,10 @@ var newRabbitPublisher = func(url, queueName string) (publisherWithClose, error)
 
 func main() {
 	cfg := config.LoadFromEnv()
-	repo := buildRepository(cfg)
+	repo, err := buildRepository(cfg)
+	if err != nil {
+		log.Fatalf("gateway repository init failed: %v", err)
+	}
 	limiter := buildRateLimiter(cfg)
 	authorizer := security.NewAPIKeyAuthorizer(cfg.APIKeys())
 	publisher, err := buildPublisher(cfg)
@@ -77,34 +80,32 @@ func main() {
 	h.Spin()
 }
 
-func buildRepository(cfg config.Config) storage.CaseRepository {
+func buildRepository(cfg config.Config) (storage.CaseRepository, error) {
 	if cfg.StorageBackend == "memory" {
 		log.Printf("gateway storage backend=memory")
-		return storage.NewInMemoryCaseRepository(storage.DefaultSeedCases())
+		return storage.NewInMemoryCaseRepository(storage.DefaultSeedCases()), nil
 	}
 
 	db, err := openMySQL(cfg.MySQLDSN)
 	if err != nil {
-		log.Printf("mysql open failed, fallback memory: %v", err)
-		return storage.NewInMemoryCaseRepository(storage.DefaultSeedCases())
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
-		log.Printf("mysql ping failed, fallback memory: %v", err)
 		_ = db.Close()
-		return storage.NewInMemoryCaseRepository(storage.DefaultSeedCases())
+		return nil, err
 	}
 
 	if err := pingRedis(ctx, cfg); err != nil {
 		log.Printf("redis ping failed, continue with mysql only: %v", err)
 		log.Printf("gateway storage backend=mysql")
-		return storage.NewMySQLRedisCaseRepository(db, nil, time.Duration(cfg.CaseCacheTTLSeconds)*time.Second)
+		return storage.NewMySQLRedisCaseRepository(db, nil, time.Duration(cfg.CaseCacheTTLSeconds)*time.Second), nil
 	}
 
 	rdb := newRedisCacheClient(cfg)
 	log.Printf("gateway storage backend=mysql+redis")
-	return storage.NewMySQLRedisCaseRepository(db, rdb, time.Duration(cfg.CaseCacheTTLSeconds)*time.Second)
+	return storage.NewMySQLRedisCaseRepository(db, rdb, time.Duration(cfg.CaseCacheTTLSeconds)*time.Second), nil
 }
 
 func buildPublisher(cfg config.Config) (publisherWithClose, error) {
