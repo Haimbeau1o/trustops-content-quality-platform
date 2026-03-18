@@ -3,76 +3,74 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
-	"sync"
 
+	"github.com/Haimbeau1o/trustops-content-quality-platform/services/gateway-go/internal/mq"
+	"github.com/Haimbeau1o/trustops-content-quality-platform/services/gateway-go/internal/storage"
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/utils"
 )
 
-type evidenceItem struct {
-	Type   string `json:"type"`
-	Detail string `json:"detail"`
-}
-
 type ingestEventRequest struct {
-	EventID     string         `json:"event_id"`
-	ContentID   string         `json:"content_id"`
-	ContentType string         `json:"content_type"`
-	RiskSignals []string       `json:"risk_signals"`
-	Evidence    []evidenceItem `json:"evidence"`
+	EventID     string                 `json:"event_id"`
+	ContentID   string                 `json:"content_id"`
+	ContentType string                 `json:"content_type"`
+	RiskSignals []string               `json:"risk_signals"`
+	Evidence    []storage.EvidenceItem `json:"evidence"`
 }
 
-type caseRecord struct {
-	CaseID      string         `json:"case_id"`
-	Status      string         `json:"status"`
-	ContentID   string         `json:"content_id"`
-	ContentType string         `json:"content_type"`
-	RiskSignals []string       `json:"risk_signals"`
-	Evidence    []evidenceItem `json:"evidence"`
+type Dependencies struct {
+	CaseRepository storage.CaseRepository
+	Publisher      mq.Publisher
 }
 
-var (
-	caseStoreMu sync.RWMutex
-	caseStore   map[string]caseRecord
-)
+type apiHandler struct {
+	repo      storage.CaseRepository
+	publisher mq.Publisher
+}
 
 func NewRouter() *server.Hertz {
+	return NewRouterWithDependencies(Dependencies{})
+}
+
+func NewRouterWithDependencies(deps Dependencies) *server.Hertz {
 	h := server.Default()
-	RegisterRoutes(h)
+	RegisterRoutes(h, deps)
 	return h
 }
 
-func RegisterRoutes(h *server.Hertz) {
-	caseStoreMu.Lock()
-	caseStore = map[string]caseRecord{
-		"case-001": {
-			CaseID:      "case-001",
-			Status:      "open",
-			ContentID:   "content-seed-001",
-			ContentType: "video",
-			RiskSignals: []string{"low_quality"},
-			Evidence: []evidenceItem{
-				{Type: "rule_hit", Detail: "rule:seed_low_quality"},
-			},
-		},
+func RegisterRoutes(h *server.Hertz, deps Dependencies) {
+	resolved := withDefaults(deps)
+	handler := &apiHandler{
+		repo:      resolved.CaseRepository,
+		publisher: resolved.Publisher,
 	}
-	caseStoreMu.Unlock()
 
-	h.GET("/healthz", healthzHandler)
-	h.POST("/api/v1/content/events/ingest", ingestContentEventHandler)
-	h.GET("/api/v1/content/cases/:case_id", getCaseByIDHandler)
+	h.GET("/healthz", handler.healthzHandler)
+	h.POST("/api/v1/content/events/ingest", handler.ingestContentEventHandler)
+	h.GET("/api/v1/content/cases/:case_id", handler.getCaseByIDHandler)
 }
 
-func healthzHandler(_ context.Context, c *app.RequestContext) {
+func withDefaults(deps Dependencies) Dependencies {
+	if deps.CaseRepository == nil {
+		deps.CaseRepository = storage.NewInMemoryCaseRepository(storage.DefaultSeedCases())
+	}
+	if deps.Publisher == nil {
+		deps.Publisher = mq.NewNoopPublisher()
+	}
+	return deps
+}
+
+func (h *apiHandler) healthzHandler(_ context.Context, c *app.RequestContext) {
 	c.JSON(http.StatusOK, utils.H{
 		"service": "content-quality-gateway",
 		"status":  "ok",
 	})
 }
 
-func ingestContentEventHandler(_ context.Context, c *app.RequestContext) {
+func (h *apiHandler) ingestContentEventHandler(ctx context.Context, c *app.RequestContext) {
 	var req ingestEventRequest
 	if err := json.Unmarshal(c.Request.Body(), &req); err != nil {
 		c.JSON(http.StatusBadRequest, utils.H{"error": "invalid_json"})
@@ -84,7 +82,7 @@ func ingestContentEventHandler(_ context.Context, c *app.RequestContext) {
 	}
 
 	newCaseID := "case-" + req.EventID
-	record := caseRecord{
+	record := storage.Case{
 		CaseID:      newCaseID,
 		Status:      "queued_for_review",
 		ContentID:   req.ContentID,
@@ -93,9 +91,20 @@ func ingestContentEventHandler(_ context.Context, c *app.RequestContext) {
 		Evidence:    req.Evidence,
 	}
 
-	caseStoreMu.Lock()
-	caseStore[newCaseID] = record
-	caseStoreMu.Unlock()
+	if err := h.repo.SaveCase(ctx, record); err != nil {
+		c.JSON(http.StatusInternalServerError, utils.H{"error": "case_persist_failed"})
+		return
+	}
+
+	if err := h.publisher.PublishCaseIngested(ctx, mq.CaseEvent{
+		EventID:     req.EventID,
+		CaseID:      newCaseID,
+		ContentID:   req.ContentID,
+		ContentType: req.ContentType,
+		RiskSignals: req.RiskSignals,
+	}); err != nil {
+		log.Printf("publish case event failed: %v", err)
+	}
 
 	c.JSON(http.StatusAccepted, utils.H{
 		"case_id":     newCaseID,
@@ -104,12 +113,13 @@ func ingestContentEventHandler(_ context.Context, c *app.RequestContext) {
 	})
 }
 
-func getCaseByIDHandler(_ context.Context, c *app.RequestContext) {
+func (h *apiHandler) getCaseByIDHandler(ctx context.Context, c *app.RequestContext) {
 	caseID := c.Param("case_id")
-
-	caseStoreMu.RLock()
-	record, ok := caseStore[caseID]
-	caseStoreMu.RUnlock()
+	record, ok, err := h.repo.GetCase(ctx, caseID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, utils.H{"error": "case_lookup_failed"})
+		return
+	}
 
 	if !ok {
 		c.JSON(http.StatusNotFound, utils.H{

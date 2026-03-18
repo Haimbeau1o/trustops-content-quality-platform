@@ -83,52 +83,62 @@ trustops-content-quality-platform/
 └── scripts/
 ```
 
-## 本地运行（第一版骨架）
+## Phase 2 运行形态（runtime skeleton+）
 
-### 1) Go gateway 单独运行
+Phase 2 已将网关从纯内存骨架升级为可演示的平台后端形态：
+- 配置：`services/gateway-go/internal/config` 从环境变量加载，带默认值
+- 存储：`internal/storage` 支持 `MySQL(持久化) + Redis(查询缓存)`，并保留内存 fallback
+- 消息：`internal/mq` 在 ingest 后发布轻量 case 事件到 RabbitMQ
+- 异步：`services/worker` 消费队列并记录处理日志
+- AI：`services/ai-copilot` 继续保持增强链路，不替代主判定
 
-```bash
-cd services/gateway-go
-go mod tidy
-go run ./cmd/server
-```
+### 1) 环境变量
 
-可用接口：
-- `GET http://127.0.0.1:8080/healthz`
-- `POST http://127.0.0.1:8080/api/v1/content/events/ingest`
-- `GET http://127.0.0.1:8080/api/v1/content/cases/:case_id`
-
-### 2) Python copilot 单独运行
+项目根目录提供了 `.env.example`，可复制为 `.env` 后按需覆盖：
 
 ```bash
-cd services/ai-copilot
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8090
+cp .env.example .env
 ```
 
-可用接口：
-- `GET http://127.0.0.1:8090/healthz`
-- `POST http://127.0.0.1:8090/copilot/content/summary`
+默认值已经适配 Docker Compose，本地不改也可直接启动。
 
-### 3) 使用 Docker Compose 一键启动基础依赖和服务
+### 2) 一键启动（推荐）
 
 ```bash
 docker compose up --build
 ```
 
-启动后默认端口：
-- Gateway: `8080`
-- Copilot: `8090`
-- MySQL: `3306`
-- Redis: `6379`
-- RabbitMQ: `5672` / `15672`
+运行拓扑：
+- `gateway`：`8080`
+- `copilot`：`8090`
+- `worker`：后台消费 RabbitMQ，无对外端口
+- `mysql`：`3306`（自动执行 `infra/mysql/init/001_init.sql`）
+- `redis`：`6379`
+- `rabbitmq`：`5672` / `15672`
 
-### 4) 运行 copilot 测试
+### 3) API 保持不变
+
+Gateway：
+- `GET /healthz`
+- `POST /api/v1/content/events/ingest`
+- `GET /api/v1/content/cases/:case_id`
+
+Copilot：
+- `GET /healthz`
+- `POST /copilot/content/summary`
+
+### 4) 样例请求
 
 ```bash
-cd services/ai-copilot
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements-dev.txt
-python3 -m pytest -q
+./scripts/sample_requests.sh
+```
+
+该脚本会按顺序执行：健康检查、事件接入、案例查询、copilot 摘要。
+
+### 5) 本地测试
+
+```bash
+cd services/gateway-go && go test ./...
+cd services/ai-copilot && python3 -m pytest -q
+cd services/worker && go test ./...
 ```

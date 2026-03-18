@@ -4,14 +4,15 @@ services:
     container_name: cq-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: content_quality
-      MYSQL_USER: trustops
-      MYSQL_PASSWORD: trustops
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-content_quality}
+      MYSQL_USER: ${MYSQL_USER:-trustops}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-trustops}
     ports:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+      - ./infra/mysql/init:/docker-entrypoint-initdb.d:ro
 
   redis:
     image: redis:7.4-alpine
@@ -34,11 +35,15 @@ services:
     container_name: cq-gateway
     restart: unless-stopped
     environment:
-      GATEWAY_ADDR: ":8080"
-      MYSQL_DSN: "trustops:trustops@tcp(mysql:3306)/content_quality?parseTime=true"
-      REDIS_ADDR: "redis:6379"
-      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
-      COPILOT_URL: "http://copilot:8090"
+      GATEWAY_ADDR: "${GATEWAY_ADDR:-:8080}"
+      STORAGE_BACKEND: "${STORAGE_BACKEND:-auto}"
+      MYSQL_DSN: "${MYSQL_DSN:-trustops:trustops@tcp(mysql:3306)/content_quality?parseTime=true}"
+      REDIS_ADDR: "${REDIS_ADDR:-redis:6379}"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+      REDIS_DB: "${REDIS_DB:-0}"
+      RABBITMQ_URL: "${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}"
+      RABBITMQ_QUEUE: "${RABBITMQ_QUEUE:-content.events.ingest}"
+      CASE_CACHE_TTL_SECONDS: "${CASE_CACHE_TTL_SECONDS:-300}"
     depends_on:
       - mysql
       - redis
@@ -54,6 +59,18 @@ services:
     restart: unless-stopped
     ports:
       - "8090:8090"
+
+  worker:
+    build:
+      context: ./services/worker
+    container_name: cq-worker
+    restart: unless-stopped
+    environment:
+      WORKER_RABBITMQ_URL: "${WORKER_RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}"
+      WORKER_QUEUE: "${WORKER_QUEUE:-content.events.ingest}"
+      WORKER_CONSUMER_TAG: "${WORKER_CONSUMER_TAG:-content-quality-worker}"
+    depends_on:
+      - rabbitmq
 
 volumes:
   mysql_data:
