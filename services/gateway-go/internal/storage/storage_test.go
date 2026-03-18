@@ -170,6 +170,94 @@ func TestMySQLRedisRepositoryGetFallsBackToDBAndBackfillsCache(t *testing.T) {
 	}
 }
 
+func TestInMemoryRepositoryIngestCaseDeduplicatesByEventID(t *testing.T) {
+	repo := NewInMemoryCaseRepository(nil)
+	ctx := context.Background()
+	input := IngestCaseInput{
+		IdempotencyKey: "evt-dup-001",
+		EventID:        "evt-dup-001",
+		ContentID:      "content-dup-001",
+		ContentType:    "video",
+		RiskSignals:    []string{"spam"},
+		Evidence: []EvidenceItem{
+			{Type: "rule_hit", Detail: "rule:spam"},
+		},
+	}
+
+	first, err := repo.IngestCase(ctx, input)
+	if err != nil {
+		t.Fatalf("first IngestCase() error = %v", err)
+	}
+	second, err := repo.IngestCase(ctx, input)
+	if err != nil {
+		t.Fatalf("second IngestCase() error = %v", err)
+	}
+
+	if first.IdempotentReplay {
+		t.Fatalf("expected first ingest not to be replay")
+	}
+	if !second.IdempotentReplay {
+		t.Fatalf("expected second ingest to be replay")
+	}
+	if first.Case.CaseID != second.Case.CaseID {
+		t.Fatalf("expected same case ID on replay, got %q and %q", first.Case.CaseID, second.Case.CaseID)
+	}
+
+	metrics, err := repo.GetOpsMetrics(ctx)
+	if err != nil {
+		t.Fatalf("GetOpsMetrics() error = %v", err)
+	}
+	if metrics.TotalCases != 1 {
+		t.Fatalf("expected 1 case, got %d", metrics.TotalCases)
+	}
+	if metrics.IdempotentReplays != 1 {
+		t.Fatalf("expected 1 idempotent replay, got %d", metrics.IdempotentReplays)
+	}
+	if metrics.OutboxPending != 1 {
+		t.Fatalf("expected 1 pending outbox event, got %d", metrics.OutboxPending)
+	}
+	if metrics.AuditLogCount != 2 {
+		t.Fatalf("expected 2 audit logs, got %d", metrics.AuditLogCount)
+	}
+}
+
+func TestInMemoryRepositoryMetricsReflectDeadLetterOutbox(t *testing.T) {
+	repo := NewInMemoryCaseRepository(nil)
+	ctx := context.Background()
+	_, err := repo.IngestCase(ctx, IngestCaseInput{
+		IdempotencyKey: "evt-dead-001",
+		EventID:        "evt-dead-001",
+		ContentID:      "content-dead-001",
+		ContentType:    "image",
+		RiskSignals:    []string{"unsafe"},
+		Evidence: []EvidenceItem{
+			{Type: "rule_hit", Detail: "rule:unsafe"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("IngestCase() error = %v", err)
+	}
+
+	events, err := repo.ClaimPendingOutboxEvents(ctx, 10, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("ClaimPendingOutboxEvents() error = %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 claimed event, got %d", len(events))
+	}
+	if err := repo.MarkOutboxDead(ctx, events[0].ID, 3, "publish failed"); err != nil {
+		t.Fatalf("MarkOutboxDead() error = %v", err)
+	}
+
+	metrics, err := repo.GetOpsMetrics(ctx)
+	if err != nil {
+		t.Fatalf("GetOpsMetrics() error = %v", err)
+	}
+	if metrics.OutboxDeadLetter != 1 {
+		t.Fatalf("expected 1 dead-letter outbox event, got %d", metrics.OutboxDeadLetter)
+	}
+}
+
 func openSQLMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	db, mock, err := sqlmock.New()

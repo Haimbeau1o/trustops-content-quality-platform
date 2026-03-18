@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 
 	"github.com/Haimbeau1o/trustops-content-quality-platform/services/gateway-go/internal/mq"
@@ -51,6 +50,7 @@ func RegisterRoutes(h *server.Hertz, deps Dependencies) {
 	h.GET("/healthz", handler.healthzHandler)
 	h.POST("/api/v1/content/events/ingest", handler.ingestContentEventHandler)
 	h.GET("/api/v1/content/cases/:case_id", handler.getCaseByIDHandler)
+	h.GET("/api/v1/ops/metrics", handler.opsMetricsHandler)
 }
 
 func withDefaults(deps Dependencies) Dependencies {
@@ -81,35 +81,25 @@ func (h *apiHandler) ingestContentEventHandler(ctx context.Context, c *app.Reque
 		return
 	}
 
-	newCaseID := "case-" + req.EventID
-	record := storage.Case{
-		CaseID:      newCaseID,
-		Status:      "queued_for_review",
-		ContentID:   req.ContentID,
-		ContentType: req.ContentType,
-		RiskSignals: req.RiskSignals,
-		Evidence:    req.Evidence,
-	}
-
-	if err := h.repo.SaveCase(ctx, record); err != nil {
+	result, err := h.repo.IngestCase(ctx, storage.IngestCaseInput{
+		IdempotencyKey: req.EventID,
+		EventID:        req.EventID,
+		ContentID:      req.ContentID,
+		ContentType:    req.ContentType,
+		RiskSignals:    req.RiskSignals,
+		Evidence:       req.Evidence,
+	})
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, utils.H{"error": "case_persist_failed"})
 		return
 	}
 
-	if err := h.publisher.PublishCaseIngested(ctx, mq.CaseEvent{
-		EventID:     req.EventID,
-		CaseID:      newCaseID,
-		ContentID:   req.ContentID,
-		ContentType: req.ContentType,
-		RiskSignals: req.RiskSignals,
-	}); err != nil {
-		log.Printf("publish case event failed: %v", err)
-	}
-
 	c.JSON(http.StatusAccepted, utils.H{
-		"case_id":     newCaseID,
-		"status":      "queued_for_review",
-		"next_action": "operator_triage",
+		"case_id":            result.Case.CaseID,
+		"status":             result.Case.Status,
+		"next_action":        "operator_triage",
+		"idempotent_replay":  result.IdempotentReplay,
+		"event_publish_mode": "outbox_relay",
 	})
 }
 
@@ -130,4 +120,13 @@ func (h *apiHandler) getCaseByIDHandler(ctx context.Context, c *app.RequestConte
 	}
 
 	c.JSON(http.StatusOK, record)
+}
+
+func (h *apiHandler) opsMetricsHandler(ctx context.Context, c *app.RequestContext) {
+	metrics, err := h.repo.GetOpsMetrics(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, utils.H{"error": "ops_metrics_failed"})
+		return
+	}
+	c.JSON(http.StatusOK, metrics)
 }

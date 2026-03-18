@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log"
+	"math"
 	"time"
 
 	"github.com/Haimbeau1o/trustops-content-quality-platform/services/gateway-go/internal/config"
@@ -60,6 +61,7 @@ func main() {
 			log.Printf("close publisher failed: %v", err)
 		}
 	}()
+	startOutboxRelay(context.Background(), repo, publisher, cfg)
 
 	h := server.Default(server.WithHostPorts(cfg.GatewayAddr))
 	httpapi.RegisterRoutes(h, httpapi.Dependencies{
@@ -109,4 +111,84 @@ func buildPublisher(cfg config.Config) (publisherWithClose, error) {
 	}
 	log.Printf("gateway publisher backend=rabbitmq queue=%s", cfg.RabbitMQQueue)
 	return pub, nil
+}
+
+func startOutboxRelay(ctx context.Context, repo storage.CaseRepository, publisher mq.Publisher, cfg config.Config) {
+	pollInterval := time.Duration(cfg.OutboxPollIntervalSeconds) * time.Second
+	if pollInterval <= 0 {
+		pollInterval = 2 * time.Second
+	}
+	ticker := time.NewTicker(pollInterval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := processOutboxOnce(ctx, repo, publisher, cfg); err != nil {
+					log.Printf("outbox relay error: %v", err)
+				}
+			}
+		}
+	}()
+}
+
+func processOutboxOnce(ctx context.Context, repo storage.CaseRepository, publisher mq.Publisher, cfg config.Config) error {
+	batchSize := cfg.OutboxBatchSize
+	if batchSize <= 0 {
+		batchSize = 50
+	}
+	maxAttempts := cfg.OutboxMaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+
+	events, err := repo.ClaimPendingOutboxEvents(ctx, batchSize, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	for _, event := range events {
+		pubErr := publisher.PublishCaseIngested(ctx, mq.CaseEvent{
+			EventID:     event.EventID,
+			CaseID:      event.CaseID,
+			ContentID:   event.ContentID,
+			ContentType: event.ContentType,
+			RiskSignals: event.RiskSignals,
+		})
+		if pubErr == nil {
+			if err := repo.MarkOutboxPublished(ctx, event.ID); err != nil {
+				return err
+			}
+			continue
+		}
+
+		nextAttemptCount := event.Attempts + 1
+		if nextAttemptCount >= maxAttempts {
+			if err := repo.MarkOutboxDead(ctx, event.ID, nextAttemptCount, pubErr.Error()); err != nil {
+				return err
+			}
+			continue
+		}
+		nextAttemptAt := time.Now().UTC().Add(calculateRetryDelay(nextAttemptCount, cfg.OutboxRetryBaseSeconds))
+		if err := repo.MarkOutboxRetry(ctx, event.ID, nextAttemptCount, nextAttemptAt, pubErr.Error()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func calculateRetryDelay(attempt, baseSeconds int) time.Duration {
+	if baseSeconds <= 0 {
+		baseSeconds = 2
+	}
+	if attempt <= 0 {
+		attempt = 1
+	}
+	exponent := float64(attempt - 1)
+	seconds := float64(baseSeconds) * math.Pow(2, exponent)
+	if seconds > 3600 {
+		seconds = 3600
+	}
+	return time.Duration(seconds) * time.Second
 }

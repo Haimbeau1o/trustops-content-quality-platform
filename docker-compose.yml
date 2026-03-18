@@ -65,6 +65,10 @@ services:
       RABBITMQ_URL: "${RABBITMQ_URL:-amqp://trustops:trustops@rabbitmq:5672/}"
       RABBITMQ_QUEUE: "${RABBITMQ_QUEUE:-content.events.ingest}"
       CASE_CACHE_TTL_SECONDS: "${CASE_CACHE_TTL_SECONDS:-300}"
+      OUTBOX_POLL_INTERVAL_SECONDS: "${OUTBOX_POLL_INTERVAL_SECONDS:-2}"
+      OUTBOX_BATCH_SIZE: "${OUTBOX_BATCH_SIZE:-50}"
+      OUTBOX_MAX_ATTEMPTS: "${OUTBOX_MAX_ATTEMPTS:-3}"
+      OUTBOX_RETRY_BASE_SECONDS: "${OUTBOX_RETRY_BASE_SECONDS:-2}"
     depends_on:
       mysql:
         condition: service_healthy

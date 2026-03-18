@@ -83,14 +83,17 @@ trustops-content-quality-platform/
 └── scripts/
 ```
 
-## Phase 2 运行形态（runtime skeleton+）
+## Phase 3 运行形态（runtime reliability）
 
-Phase 2 已将网关从纯内存骨架升级为可演示的平台后端形态：
+Phase 3 在 phase-2 运行骨架上补齐了可靠性主链路能力：
 - 配置：`services/gateway-go/internal/config` 从环境变量加载，带默认值
 - 存储：`internal/storage` 支持 `MySQL(持久化) + Redis(查询缓存)`，Redis 异常时降级为 MySQL-only
-- 消息：`internal/mq` 在 ingest 后发布轻量 case 事件到 RabbitMQ，启动阶段要求 MQ 可用
+- 幂等：事件接入按 `event_id` 做请求幂等，重复请求返回同一 `case_id`
+- 事务：单次 ingest 在一个事务内写入 `content_cases + idempotency + outbox + audit_log`
+- 消息：网关后台 outbox relay 异步发布到 RabbitMQ，失败按重试阈值进入 dead-letter
 - 异步：`services/worker` 消费队列并记录处理日志
 - AI：`services/ai-copilot` 继续保持增强链路，不替代主判定
+- 运维：新增 `GET /api/v1/ops/metrics`，输出 ingest/outbox/audit 指标汇总
 - 编排：`docker-compose.yml` 为 MySQL / Redis / RabbitMQ 增加健康检查，避免启动窗口进入“假成功”链路
 
 ### 1) 环境变量
@@ -123,6 +126,7 @@ Gateway：
 - `GET /healthz`
 - `POST /api/v1/content/events/ingest`
 - `GET /api/v1/content/cases/:case_id`
+- `GET /api/v1/ops/metrics`
 
 Copilot：
 - `GET /healthz`

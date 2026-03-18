@@ -5,10 +5,10 @@ set -euo pipefail
 GATEWAY_BASE_URL="${GATEWAY_BASE_URL:-http://127.0.0.1:8080}"
 COPILOT_BASE_URL="${COPILOT_BASE_URL:-http://127.0.0.1:8090}"
 
-echo "[1/4] healthz"
+echo "[1/5] healthz"
 curl -sS "${GATEWAY_BASE_URL}/healthz" | jq .
 
-echo "[2/4] ingest event"
+echo "[2/5] ingest event"
 curl -sS -X POST "${GATEWAY_BASE_URL}/api/v1/content/events/ingest" \
   -H "Content-Type: application/json" \
   -d '{
@@ -19,10 +19,13 @@ curl -sS -X POST "${GATEWAY_BASE_URL}/api/v1/content/events/ingest" \
     "evidence": [{"type":"rule_hit","detail":"rule:unsafe_keyword"}]
   }' | jq .
 
-echo "[3/4] query ingested case"
+echo "[3/5] query ingested case"
 curl -sS "${GATEWAY_BASE_URL}/api/v1/content/cases/case-evt-sample-001" | jq .
 
-echo "[4/4] copilot summary"
+echo "[4/5] ops metrics"
+curl -sS "${GATEWAY_BASE_URL}/api/v1/ops/metrics" | jq .
+
+echo "[5/5] copilot summary"
 curl -sS -X POST "${COPILOT_BASE_URL}/copilot/content/summary" \
   -H "Content-Type: application/json" \
   -d '{
