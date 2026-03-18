@@ -83,3 +83,52 @@ trustops-content-quality-platform/
 └── scripts/
 ```
 
+## 本地运行（第一版骨架）
+
+### 1) Go gateway 单独运行
+
+```bash
+cd services/gateway-go
+go mod tidy
+go run ./cmd/server
+```
+
+可用接口：
+- `GET http://127.0.0.1:8080/healthz`
+- `POST http://127.0.0.1:8080/api/v1/content/events/ingest`
+- `GET http://127.0.0.1:8080/api/v1/content/cases/:case_id`
+
+### 2) Python copilot 单独运行
+
+```bash
+cd services/ai-copilot
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8090
+```
+
+可用接口：
+- `GET http://127.0.0.1:8090/healthz`
+- `POST http://127.0.0.1:8090/copilot/content/summary`
+
+### 3) 使用 Docker Compose 一键启动基础依赖和服务
+
+```bash
+docker compose up --build
+```
+
+启动后默认端口：
+- Gateway: `8080`
+- Copilot: `8090`
+- MySQL: `3306`
+- Redis: `6379`
+- RabbitMQ: `5672` / `15672`
+
+### 4) 运行 copilot 测试
+
+```bash
+cd services/ai-copilot
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+python3 -m pytest -q
+```

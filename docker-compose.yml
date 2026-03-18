@@ -1,0 +1,59 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: cq-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: content_quality
+      MYSQL_USER: trustops
+      MYSQL_PASSWORD: trustops
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: cq-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: cq-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  gateway:
+    build:
+      context: ./services/gateway-go
+    container_name: cq-gateway
+    restart: unless-stopped
+    environment:
+      GATEWAY_ADDR: ":8080"
+      MYSQL_DSN: "trustops:trustops@tcp(mysql:3306)/content_quality?parseTime=true"
+      REDIS_ADDR: "redis:6379"
+      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+      COPILOT_URL: "http://copilot:8090"
+    depends_on:
+      - mysql
+      - redis
+      - rabbitmq
+      - copilot
+    ports:
+      - "8080:8080"
+
+  copilot:
+    build:
+      context: ./services/ai-copilot
+    container_name: cq-copilot
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+
+volumes:
+  mysql_data:
