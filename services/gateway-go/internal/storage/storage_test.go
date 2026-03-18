@@ -258,6 +258,72 @@ func TestInMemoryRepositoryMetricsReflectDeadLetterOutbox(t *testing.T) {
 	}
 }
 
+func TestInMemoryRepositoryListAuditLogsReturnsLatestFirst(t *testing.T) {
+	repo := NewInMemoryCaseRepository(nil)
+	ctx := context.Background()
+	_, err := repo.IngestCase(ctx, IngestCaseInput{
+		IdempotencyKey: "evt-audit-001",
+		EventID:        "evt-audit-001",
+		ContentID:      "content-001",
+		ContentType:    "video",
+		RiskSignals:    []string{"spam"},
+	})
+	if err != nil {
+		t.Fatalf("IngestCase() error = %v", err)
+	}
+	_, err = repo.IngestCase(ctx, IngestCaseInput{
+		IdempotencyKey: "evt-audit-001",
+		EventID:        "evt-audit-001",
+		ContentID:      "content-001",
+		ContentType:    "video",
+		RiskSignals:    []string{"spam"},
+	})
+	if err != nil {
+		t.Fatalf("replay IngestCase() error = %v", err)
+	}
+
+	logs, err := repo.ListAuditLogs(ctx, "case-evt-audit-001", 10)
+	if err != nil {
+		t.Fatalf("ListAuditLogs() error = %v", err)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("expected 2 logs, got %d", len(logs))
+	}
+	if logs[0].Action != "idempotent_replay" {
+		t.Fatalf("expected latest audit action to be idempotent_replay, got %q", logs[0].Action)
+	}
+}
+
+func TestMySQLRepositoryListAuditLogs(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewMySQLRedisCaseRepository(db, nil, time.Minute)
+	rows := sqlmock.NewRows([]string{"event_id", "case_id", "action", "detail", "created_at"}).
+		AddRow("evt-2", "case-1", "relay_published", "published", time.Now().UTC()).
+		AddRow("evt-1", "case-1", "ingest_accepted", "accepted", time.Now().UTC().Add(-time.Minute))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT event_id, case_id, action, detail, created_at FROM content_audit_logs WHERE case_id = ? ORDER BY id DESC LIMIT ?")).
+		WithArgs("case-1", 2).
+		WillReturnRows(rows)
+
+	logs, err := repo.ListAuditLogs(context.Background(), "case-1", 2)
+	if err != nil {
+		t.Fatalf("ListAuditLogs() error = %v", err)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("expected 2 logs, got %d", len(logs))
+	}
+	if logs[0].Action != "relay_published" {
+		t.Fatalf("expected first action relay_published, got %q", logs[0].Action)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations not met: %v", err)
+	}
+}
+
 func openSQLMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	db, mock, err := sqlmock.New()

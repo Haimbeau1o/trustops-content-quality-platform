@@ -63,10 +63,19 @@ type OpsMetrics struct {
 	AuditLogCount     int64 `json:"audit_log_count"`
 }
 
+type AuditLog struct {
+	EventID   string    `json:"event_id"`
+	CaseID    string    `json:"case_id"`
+	Action    string    `json:"action"`
+	Detail    string    `json:"detail"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type CaseRepository interface {
 	SaveCase(ctx context.Context, c Case) error
 	GetCase(ctx context.Context, caseID string) (Case, bool, error)
 	IngestCase(ctx context.Context, input IngestCaseInput) (IngestCaseResult, error)
+	ListAuditLogs(ctx context.Context, caseID string, limit int) ([]AuditLog, error)
 	ClaimPendingOutboxEvents(ctx context.Context, limit int, now time.Time) ([]OutboxEvent, error)
 	MarkOutboxPublished(ctx context.Context, outboxID int64) error
 	MarkOutboxRetry(ctx context.Context, outboxID int64, attempts int, nextAttempt time.Time, lastError string) error
@@ -82,6 +91,7 @@ type InMemoryCaseRepository struct {
 	outboxSeq         int64
 	idempotentReplays int64
 	auditLogCount     int64
+	auditLogsByCase   map[string][]AuditLog
 }
 
 func NewInMemoryCaseRepository(seed []Case) *InMemoryCaseRepository {
@@ -93,6 +103,7 @@ func NewInMemoryCaseRepository(seed []Case) *InMemoryCaseRepository {
 		cases:            m,
 		idempotencyByKey: map[string]string{},
 		outboxByID:       map[int64]OutboxEvent{},
+		auditLogsByCase:  map[string][]AuditLog{},
 	}
 }
 
@@ -122,7 +133,13 @@ func (r *InMemoryCaseRepository) IngestCase(_ context.Context, input IngestCaseI
 	if existingCaseID, ok := r.idempotencyByKey[key]; ok {
 		existingCase := r.cases[existingCaseID]
 		r.idempotentReplays++
-		r.auditLogCount++
+		r.appendAuditLog(existingCaseID, AuditLog{
+			EventID:   input.EventID,
+			CaseID:    existingCaseID,
+			Action:    "idempotent_replay",
+			Detail:    "duplicate event replayed",
+			CreatedAt: time.Now().UTC(),
+		})
 		return IngestCaseResult{
 			Case:             existingCase,
 			IdempotentReplay: true,
@@ -140,7 +157,13 @@ func (r *InMemoryCaseRepository) IngestCase(_ context.Context, input IngestCaseI
 	}
 	r.cases[caseID] = newCase
 	r.idempotencyByKey[key] = caseID
-	r.auditLogCount++
+	r.appendAuditLog(caseID, AuditLog{
+		EventID:   input.EventID,
+		CaseID:    caseID,
+		Action:    "ingest_accepted",
+		Detail:    "new ingest accepted and queued",
+		CreatedAt: time.Now().UTC(),
+	})
 
 	r.outboxSeq++
 	r.outboxByID[r.outboxSeq] = OutboxEvent{
@@ -159,6 +182,25 @@ func (r *InMemoryCaseRepository) IngestCase(_ context.Context, input IngestCaseI
 		Case:             newCase,
 		IdempotentReplay: false,
 	}, nil
+}
+
+func (r *InMemoryCaseRepository) ListAuditLogs(_ context.Context, caseID string, limit int) ([]AuditLog, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	entries := append([]AuditLog(nil), r.auditLogsByCase[caseID]...)
+	if limit <= 0 || limit > len(entries) {
+		limit = len(entries)
+	}
+	result := make([]AuditLog, 0, limit)
+	for i := 0; i < limit; i++ {
+		idx := len(entries) - 1 - i
+		if idx < 0 {
+			break
+		}
+		result = append(result, entries[idx])
+	}
+	return result, nil
 }
 
 func (r *InMemoryCaseRepository) ClaimPendingOutboxEvents(_ context.Context, limit int, now time.Time) ([]OutboxEvent, error) {
@@ -257,6 +299,11 @@ func (r *InMemoryCaseRepository) GetOpsMetrics(_ context.Context) (OpsMetrics, e
 		OutboxDeadLetter:  outboxDead,
 		AuditLogCount:     r.auditLogCount,
 	}, nil
+}
+
+func (r *InMemoryCaseRepository) appendAuditLog(caseID string, entry AuditLog) {
+	r.auditLogsByCase[caseID] = append(r.auditLogsByCase[caseID], entry)
+	r.auditLogCount++
 }
 
 type MySQLRedisCaseRepository struct {
@@ -494,6 +541,39 @@ ON DUPLICATE KEY UPDATE
 		Case:             caseRecord,
 		IdempotentReplay: false,
 	}, nil
+}
+
+func (r *MySQLRedisCaseRepository) ListAuditLogs(ctx context.Context, caseID string, limit int) ([]AuditLog, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	rows, err := r.db.QueryContext(
+		ctx,
+		"SELECT event_id, case_id, action, detail, created_at FROM content_audit_logs WHERE case_id = ? ORDER BY id DESC LIMIT ?",
+		caseID,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	logs := make([]AuditLog, 0, limit)
+	for rows.Next() {
+		var log AuditLog
+		if err := rows.Scan(&log.EventID, &log.CaseID, &log.Action, &log.Detail, &log.CreatedAt); err != nil {
+			return nil, err
+		}
+		logs = append(logs, log)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return logs, nil
 }
 
 func (r *MySQLRedisCaseRepository) ClaimPendingOutboxEvents(ctx context.Context, limit int, now time.Time) ([]OutboxEvent, error) {

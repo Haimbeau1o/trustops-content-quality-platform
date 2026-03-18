@@ -19,6 +19,9 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 	t.Setenv("OUTBOX_BATCH_SIZE", "")
 	t.Setenv("OUTBOX_MAX_ATTEMPTS", "")
 	t.Setenv("OUTBOX_RETRY_BASE_SECONDS", "")
+	t.Setenv("GATEWAY_API_KEYS", "")
+	t.Setenv("GATEWAY_RATE_LIMIT_PER_MINUTE", "")
+	t.Setenv("GATEWAY_RATE_LIMIT_PREFIX", "")
 
 	cfg := LoadFromEnv()
 
@@ -55,6 +58,15 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 	if cfg.OutboxRetryBaseSeconds != 2 {
 		t.Fatalf("expected default outbox retry base 2, got %d", cfg.OutboxRetryBaseSeconds)
 	}
+	if cfg.GatewayAPIKeys != "content-dev-key" {
+		t.Fatalf("expected default api keys, got %q", cfg.GatewayAPIKeys)
+	}
+	if cfg.RateLimitPerMinute != 60 {
+		t.Fatalf("expected default rate limit 60, got %d", cfg.RateLimitPerMinute)
+	}
+	if cfg.RateLimitPrefix != "cq" {
+		t.Fatalf("expected default rate limit prefix cq, got %q", cfg.RateLimitPrefix)
+	}
 }
 
 func TestLoadFromEnvOverrides(t *testing.T) {
@@ -71,6 +83,9 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	t.Setenv("OUTBOX_BATCH_SIZE", "9")
 	t.Setenv("OUTBOX_MAX_ATTEMPTS", "5")
 	t.Setenv("OUTBOX_RETRY_BASE_SECONDS", "4")
+	t.Setenv("GATEWAY_API_KEYS", "k1,k2")
+	t.Setenv("GATEWAY_RATE_LIMIT_PER_MINUTE", "77")
+	t.Setenv("GATEWAY_RATE_LIMIT_PREFIX", "content")
 
 	cfg := LoadFromEnv()
 
@@ -104,6 +119,15 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	if cfg.OutboxRetryBaseSeconds != 4 {
 		t.Fatalf("unexpected outbox retry base: %d", cfg.OutboxRetryBaseSeconds)
 	}
+	if cfg.GatewayAPIKeys != "k1,k2" {
+		t.Fatalf("unexpected gateway api keys: %q", cfg.GatewayAPIKeys)
+	}
+	if cfg.RateLimitPerMinute != 77 {
+		t.Fatalf("unexpected rate limit: %d", cfg.RateLimitPerMinute)
+	}
+	if cfg.RateLimitPrefix != "content" {
+		t.Fatalf("unexpected rate prefix: %q", cfg.RateLimitPrefix)
+	}
 }
 
 func TestLoadFromEnvInvalidIntUsesDefault(t *testing.T) {
@@ -113,6 +137,7 @@ func TestLoadFromEnvInvalidIntUsesDefault(t *testing.T) {
 	t.Setenv("OUTBOX_BATCH_SIZE", "bad")
 	t.Setenv("OUTBOX_MAX_ATTEMPTS", "bad")
 	t.Setenv("OUTBOX_RETRY_BASE_SECONDS", "bad")
+	t.Setenv("GATEWAY_RATE_LIMIT_PER_MINUTE", "bad")
 
 	cfg := LoadFromEnv()
 
@@ -134,6 +159,9 @@ func TestLoadFromEnvInvalidIntUsesDefault(t *testing.T) {
 	if cfg.OutboxRetryBaseSeconds != 2 {
 		t.Fatalf("expected outbox retry base default, got %d", cfg.OutboxRetryBaseSeconds)
 	}
+	if cfg.RateLimitPerMinute != 60 {
+		t.Fatalf("expected rate limit default, got %d", cfg.RateLimitPerMinute)
+	}
 }
 
 func TestMain(m *testing.M) {
@@ -151,5 +179,8 @@ func TestMain(m *testing.M) {
 	_ = os.Unsetenv("OUTBOX_BATCH_SIZE")
 	_ = os.Unsetenv("OUTBOX_MAX_ATTEMPTS")
 	_ = os.Unsetenv("OUTBOX_RETRY_BASE_SECONDS")
+	_ = os.Unsetenv("GATEWAY_API_KEYS")
+	_ = os.Unsetenv("GATEWAY_RATE_LIMIT_PER_MINUTE")
+	_ = os.Unsetenv("GATEWAY_RATE_LIMIT_PREFIX")
 	os.Exit(code)
 }

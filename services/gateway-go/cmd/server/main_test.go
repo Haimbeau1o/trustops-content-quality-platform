@@ -10,6 +10,7 @@ import (
 
 	"github.com/Haimbeau1o/trustops-content-quality-platform/services/gateway-go/internal/config"
 	"github.com/Haimbeau1o/trustops-content-quality-platform/services/gateway-go/internal/mq"
+	"github.com/Haimbeau1o/trustops-content-quality-platform/services/gateway-go/internal/security"
 	"github.com/Haimbeau1o/trustops-content-quality-platform/services/gateway-go/internal/storage"
 )
 
@@ -92,6 +93,10 @@ func (f *fakeOutboxRepo) GetCase(context.Context, string) (storage.Case, bool, e
 
 func (f *fakeOutboxRepo) IngestCase(context.Context, storage.IngestCaseInput) (storage.IngestCaseResult, error) {
 	return storage.IngestCaseResult{}, nil
+}
+
+func (f *fakeOutboxRepo) ListAuditLogs(context.Context, string, int) ([]storage.AuditLog, error) {
+	return nil, nil
 }
 
 func (f *fakeOutboxRepo) ClaimPendingOutboxEvents(context.Context, int, time.Time) ([]storage.OutboxEvent, error) {
@@ -180,5 +185,45 @@ func TestProcessOutboxOnceMarksDeadWhenAttemptsExceeded(t *testing.T) {
 	}
 	if len(repo.markedDead) != 1 || repo.markedDead[0] != 22 {
 		t.Fatalf("expected outbox id 22 to be marked dead, got %#v", repo.markedDead)
+	}
+}
+
+func TestBuildRateLimiterFallsBackToInMemory(t *testing.T) {
+	prevPingRedis := pingRedis
+	t.Cleanup(func() {
+		pingRedis = prevPingRedis
+	})
+	pingRedis = func(context.Context, config.Config) error {
+		return errors.New("redis unavailable")
+	}
+
+	limiter := buildRateLimiter(config.Config{
+		RedisAddr:           "redis:6379",
+		RateLimitPerMinute:  10,
+		RateLimitPrefix:     "cq",
+		CaseCacheTTLSeconds: 300,
+	})
+	if _, ok := limiter.(*security.InMemoryFixedWindowLimiter); !ok {
+		t.Fatalf("expected in-memory limiter fallback, got %T", limiter)
+	}
+}
+
+func TestBuildRateLimiterUsesRedisWhenAvailable(t *testing.T) {
+	prevPingRedis := pingRedis
+	t.Cleanup(func() {
+		pingRedis = prevPingRedis
+	})
+	pingRedis = func(context.Context, config.Config) error {
+		return nil
+	}
+
+	limiter := buildRateLimiter(config.Config{
+		RedisAddr:           "redis:6379",
+		RateLimitPerMinute:  10,
+		RateLimitPrefix:     "cq",
+		CaseCacheTTLSeconds: 300,
+	})
+	if _, ok := limiter.(*security.RedisFixedWindowLimiter); !ok {
+		t.Fatalf("expected redis limiter, got %T", limiter)
 	}
 }

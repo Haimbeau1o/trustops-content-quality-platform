@@ -69,6 +69,9 @@ services:
       OUTBOX_BATCH_SIZE: "${OUTBOX_BATCH_SIZE:-50}"
       OUTBOX_MAX_ATTEMPTS: "${OUTBOX_MAX_ATTEMPTS:-3}"
       OUTBOX_RETRY_BASE_SECONDS: "${OUTBOX_RETRY_BASE_SECONDS:-2}"
+      GATEWAY_API_KEYS: "${GATEWAY_API_KEYS:-content-dev-key}"
+      GATEWAY_RATE_LIMIT_PER_MINUTE: "${GATEWAY_RATE_LIMIT_PER_MINUTE:-60}"
+      GATEWAY_RATE_LIMIT_PREFIX: "${GATEWAY_RATE_LIMIT_PREFIX:-cq}"
     depends_on:
       mysql:
         condition: service_healthy
@@ -98,7 +101,11 @@ services:
       WORKER_RABBITMQ_URL: "${WORKER_RABBITMQ_URL:-amqp://trustops:trustops@rabbitmq:5672/}"
       WORKER_QUEUE: "${WORKER_QUEUE:-content.events.ingest}"
       WORKER_CONSUMER_TAG: "${WORKER_CONSUMER_TAG:-content-quality-worker}"
+      WORKER_STORAGE_BACKEND: "${WORKER_STORAGE_BACKEND:-mysql}"
+      WORKER_MYSQL_DSN: "${WORKER_MYSQL_DSN:-trustops:trustops@tcp(mysql:3306)/content_quality?parseTime=true}"
     depends_on:
+      mysql:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
 

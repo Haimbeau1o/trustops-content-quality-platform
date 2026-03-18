@@ -6,11 +6,13 @@ import (
 	"errors"
 	"log"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/Haimbeau1o/trustops-content-quality-platform/services/gateway-go/internal/config"
 	httpapi "github.com/Haimbeau1o/trustops-content-quality-platform/services/gateway-go/internal/http"
 	"github.com/Haimbeau1o/trustops-content-quality-platform/services/gateway-go/internal/mq"
+	"github.com/Haimbeau1o/trustops-content-quality-platform/services/gateway-go/internal/security"
 	"github.com/Haimbeau1o/trustops-content-quality-platform/services/gateway-go/internal/storage"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	_ "github.com/go-sql-driver/mysql"
@@ -52,6 +54,8 @@ var newRabbitPublisher = func(url, queueName string) (publisherWithClose, error)
 func main() {
 	cfg := config.LoadFromEnv()
 	repo := buildRepository(cfg)
+	limiter := buildRateLimiter(cfg)
+	authorizer := security.NewAPIKeyAuthorizer(cfg.APIKeys())
 	publisher, err := buildPublisher(cfg)
 	if err != nil {
 		log.Fatalf("rabbitmq publisher unavailable: %v", err)
@@ -67,6 +71,8 @@ func main() {
 	httpapi.RegisterRoutes(h, httpapi.Dependencies{
 		CaseRepository: repo,
 		Publisher:      publisher,
+		Authorizer:     authorizer,
+		RateLimiter:    limiter,
 	})
 	h.Spin()
 }
@@ -111,6 +117,27 @@ func buildPublisher(cfg config.Config) (publisherWithClose, error) {
 	}
 	log.Printf("gateway publisher backend=rabbitmq queue=%s", cfg.RabbitMQQueue)
 	return pub, nil
+}
+
+func buildRateLimiter(cfg config.Config) security.RateLimiter {
+	limit := cfg.RateLimitPerMinute
+	if limit <= 0 {
+		return security.NewNoopLimiter()
+	}
+	prefix := strings.TrimSpace(cfg.RateLimitPrefix)
+	if prefix == "" {
+		prefix = "cq"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := pingRedis(ctx, cfg); err == nil {
+		rdb := newRedisCacheClient(cfg)
+		return security.NewRedisFixedWindowLimiter(rdb, prefix, limit, time.Minute)
+	}
+
+	log.Printf("rate limiter fallback=in-memory limit_per_minute=%d", limit)
+	return security.NewInMemoryFixedWindowLimiter(limit, time.Minute)
 }
 
 func startOutboxRelay(ctx context.Context, repo storage.CaseRepository, publisher mq.Publisher, cfg config.Config) {

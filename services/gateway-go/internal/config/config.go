@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -19,6 +20,9 @@ type Config struct {
 	OutboxBatchSize           int
 	OutboxMaxAttempts         int
 	OutboxRetryBaseSeconds    int
+	GatewayAPIKeys            string
+	RateLimitPerMinute        int
+	RateLimitPrefix           string
 }
 
 func LoadFromEnv() Config {
@@ -36,7 +40,23 @@ func LoadFromEnv() Config {
 		OutboxBatchSize:           getEnvInt("OUTBOX_BATCH_SIZE", 50),
 		OutboxMaxAttempts:         getEnvInt("OUTBOX_MAX_ATTEMPTS", 3),
 		OutboxRetryBaseSeconds:    getEnvInt("OUTBOX_RETRY_BASE_SECONDS", 2),
+		GatewayAPIKeys:            getEnv("GATEWAY_API_KEYS", "content-dev-key"),
+		RateLimitPerMinute:        getEnvInt("GATEWAY_RATE_LIMIT_PER_MINUTE", 60),
+		RateLimitPrefix:           getEnv("GATEWAY_RATE_LIMIT_PREFIX", "cq"),
 	}
+}
+
+func (c Config) APIKeys() []string {
+	parts := strings.Split(c.GatewayAPIKeys, ",")
+	keys := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		keys = append(keys, trimmed)
+	}
+	return keys
 }
 
 func getEnv(key, fallback string) string {

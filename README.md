@@ -83,18 +83,28 @@ trustops-content-quality-platform/
 └── scripts/
 ```
 
-## Phase 3 运行形态（runtime reliability）
+## Phase 4 运行形态（security + observability + dedup）
 
-Phase 3 在 phase-2 运行骨架上补齐了可靠性主链路能力：
+Phase 4 在 phase-3 可靠性基础上补齐了 JD 强相关的平台能力：
 - 配置：`services/gateway-go/internal/config` 从环境变量加载，带默认值
 - 存储：`internal/storage` 支持 `MySQL(持久化) + Redis(查询缓存)`，Redis 异常时降级为 MySQL-only
 - 幂等：事件接入按 `event_id` 做请求幂等，重复请求返回同一 `case_id`
 - 事务：单次 ingest 在一个事务内写入 `content_cases + idempotency + outbox + audit_log`
 - 消息：网关后台 outbox relay 异步发布到 RabbitMQ，失败按重试阈值进入 dead-letter
-- 异步：`services/worker` 消费队列并记录处理日志
+- 网关安全：`X-API-Key` 鉴权，未带 key 返回 `401`，非法 key 返回 `403`
+- 网关限流：优先 Redis 固定窗口限流，Redis 不可用时自动回退到进程内限流
+- 审计查询：新增 `GET /api/v1/content/cases/:case_id/audit-logs` 查询案例审计轨迹
+- 可观测性：新增 `GET /metrics`（Prometheus 文本），同时保留 `GET /api/v1/ops/metrics` JSON 汇总
+- 异步去重：`services/worker` 引入 `content_worker_processed_events`，重复消息 `ack+skip`，避免重复副作用
 - AI：`services/ai-copilot` 继续保持增强链路，不替代主判定
-- 运维：新增 `GET /api/v1/ops/metrics`，输出 ingest/outbox/audit 指标汇总
 - 编排：`docker-compose.yml` 为 MySQL / Redis / RabbitMQ 增加健康检查，避免启动窗口进入“假成功”链路
+
+### 为什么这些能力与 JD 强相关
+
+- 后端工程与线上化：鉴权、限流、可观测性、审计查询都是标准线上后端能力
+- 数据服务与可靠性：幂等、outbox、worker 去重体现分布式一致性与稳定性交付
+- 架构抽象与复用：安全中间件、指标出口、审计查询接口都可跨业务复用
+- AI 工程化边界：AI 仅在 sidecar 增强链路，核心判定链路保持可控、可审计
 
 ### 1) 环境变量
 
@@ -126,7 +136,9 @@ Gateway：
 - `GET /healthz`
 - `POST /api/v1/content/events/ingest`
 - `GET /api/v1/content/cases/:case_id`
+- `GET /api/v1/content/cases/:case_id/audit-logs`
 - `GET /api/v1/ops/metrics`
+- `GET /metrics`
 
 Copilot：
 - `GET /healthz`
@@ -139,6 +151,12 @@ Copilot：
 ```
 
 该脚本会按顺序执行：健康检查、事件接入、案例查询、copilot 摘要。
+
+受鉴权保护的接口需传 `X-API-Key`，默认可使用：
+
+```bash
+X-API-Key: content-dev-key
+```
 
 ### 5) 本地测试
 

@@ -48,6 +48,19 @@ CREATE TABLE IF NOT EXISTS content_audit_logs (
   KEY idx_content_audit_action (action, created_at)
 );
 
+CREATE TABLE IF NOT EXISTS content_worker_processed_events (
+  event_id VARCHAR(64) PRIMARY KEY,
+  case_id VARCHAR(64) NOT NULL,
+  consumer_name VARCHAR(128) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'processing',
+  last_error VARCHAR(1024) NOT NULL DEFAULT '',
+  processed_at TIMESTAMP NULL DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_content_worker_case (case_id),
+  KEY idx_content_worker_status_updated (status, updated_at)
+);
+
 INSERT INTO content_cases (
   case_id,
   status,
